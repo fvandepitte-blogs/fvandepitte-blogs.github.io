@@ -1,43 +1,54 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+name: Deploy from Release
 
 on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["main"]
-
-  # Allows you to run this workflow manually from the Actions tab
+  # Run when this repository is created or manually triggered
   workflow_dispatch:
+  # Run on a schedule to check for new releases (every 6 hours at :00)
+  schedule:
+    - cron: '0 */6 * * *'
+  # Can also be triggered by repository_dispatch from the source repo
+  repository_dispatch:
+    types: [new-release]
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        
+      - name: Get latest release from source repo
+        id: release
+        run: |
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/fvandepitte-blogs/.github/releases/latest)
+          DOWNLOAD_URL=$(echo $LATEST_RELEASE | jq -r '.assets[] | select(.name == "blogsite-dist.tar.gz") | .browser_download_url')
+          TAG_NAME=$(echo $LATEST_RELEASE | jq -r '.tag_name')
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          
+      - name: Download and extract release
+        run: |
+          curl -L -o blogsite-dist.tar.gz "${{ steps.release.outputs.download_url }}"
+          mkdir -p dist
+          tar -xzf blogsite-dist.tar.gz -C dist
+          rm blogsite-dist.tar.gz
+          
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v4
+        
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: '.'
+          path: ./dist
+          
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
