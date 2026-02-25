@@ -28,16 +28,33 @@ jobs:
       - name: Get latest release from source repo
         id: release
         run: |
-          LATEST_RELEASE=$(curl -s https://api.github.com/repos/fvandepitte-blogs/.github/releases/latest)
-          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name == "blogsite-dist.tar.gz") | .browser_download_url // empty')
-          TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // empty')
+          set -euo pipefail
+
+          API_URL="https://api.github.com/repos/fvandepitte-blogs/.github/releases/latest"
+          echo "Fetching latest release from: $API_URL"
+
+          LATEST_RELEASE="$(curl -sS -L "$API_URL")"
+
+          TAG_NAME="$(echo "$LATEST_RELEASE" | jq -r '.tag_name // empty')"
+          RELEASE_NAME="$(echo "$LATEST_RELEASE" | jq -r '.name // empty')"
+          HTML_URL="$(echo "$LATEST_RELEASE" | jq -r '.html_url // empty')"
+
+          echo "Latest release tag:  $TAG_NAME"
+          echo "Latest release name: $RELEASE_NAME"
+          echo "Latest release url:  $HTML_URL"
+
+          echo "Assets in latest release:"
+          echo "$LATEST_RELEASE" | jq -r '.assets[]? | " - \(.name) (\(.size) bytes) => \(.browser_download_url)"'
+
+          DOWNLOAD_URL="$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name == "blogsite-dist.tar.gz") | .browser_download_url // empty')"
+
           if [[ -z "$DOWNLOAD_URL" ]]; then
             echo "No downloadable asset named blogsite-dist.tar.gz found in latest release"
             exit 1
           fi
-          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          
+
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"          
       - name: Download and extract release
         run: |
           curl -L -o blogsite-dist.tar.gz "${{ steps.release.outputs.download_url }}"
