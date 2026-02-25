@@ -29,8 +29,12 @@ jobs:
         id: release
         run: |
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/fvandepitte-blogs/.github/releases/latest)
-          DOWNLOAD_URL=$(echo $LATEST_RELEASE | jq -r '.assets[] | select(.name == "blogsite-dist.tar.gz") | .browser_download_url')
-          TAG_NAME=$(echo $LATEST_RELEASE | jq -r '.tag_name')
+          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name == "blogsite-dist.tar.gz") | .browser_download_url // empty')
+          TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // empty')
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "No downloadable asset named blogsite-dist.tar.gz found in latest release"
+            exit 1
+          fi
           echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
