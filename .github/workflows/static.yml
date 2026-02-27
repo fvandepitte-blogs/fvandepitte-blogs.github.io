@@ -55,9 +55,9 @@ jobs:
           echo "Latest release url:  $HTML_URL"
 
           echo "Assets in latest release:"
-          echo "$LATEST_RELEASE" | jq -r '.assets[]? | " - \(.name) (\(.size) bytes) => \(.browser_download_url)"'
+          echo "$LATEST_RELEASE" | jq -r '.assets[]? | " - \(.name) (\(.size) bytes) id=\(.id)"'
 
-          DOWNLOAD_URL="$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name == "blogsite-dist.tar.gz") | .browser_download_url // empty')"
+          DOWNLOAD_URL="$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name == "blogsite-dist.tar.gz") | .url // empty')"
 
           if [[ -z "$DOWNLOAD_URL" ]]; then
             echo "No downloadable asset named blogsite-dist.tar.gz found in latest release"
@@ -71,7 +71,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" -o blogsite-dist.tar.gz "${{ steps.release.outputs.download_url }}"
-          cat blogsite-dist.tar.gz 
+          echo "Downloaded $(stat --format=%s blogsite-dist.tar.gz 2>/dev/null || stat -f%z blogsite-dist.tar.gz) bytes"
           mkdir -p dist
           tar -xzf blogsite-dist.tar.gz -C dist
           rm blogsite-dist.tar.gz
