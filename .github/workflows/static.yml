@@ -71,7 +71,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" -o blogsite-dist.tar.gz "${{ steps.release.outputs.download_url }}"
-          cat blogsite-dist.tar.gz | tar -tzf - || (echo "Failed to list contents of blogsite-dist.tar.gz" && exit 1)
+          cat blogsite-dist.tar.gz 
           mkdir -p dist
           tar -xzf blogsite-dist.tar.gz -C dist
           rm blogsite-dist.tar.gz
