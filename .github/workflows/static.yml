@@ -1,14 +1,16 @@
-name: Deploy from Release
+name: Deploy Blog Site
 
 on:
-  # Run when this repository is created or manually triggered
-  workflow_dispatch:
-  # Run on a schedule to check for new releases (every 6 hours at :00)
-  schedule:
-    - cron: '0 */6 * * *'
-  # Can also be triggered by repository_dispatch from the source repo
+  # Triggered by repository_dispatch from fvandepitte-blogs/.github
   repository_dispatch:
-    types: [new-release]
+    types: [deploy-blog]
+  # Allow manual deployments from the Actions tab
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to deploy (leave empty for latest)'
+        required: false
+        type: string
 
 permissions:
   pages: write
@@ -21,69 +23,119 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy-pages.outputs.page_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: fvandepitte-blogs
           repositories: .github
-        
-      - name: Get latest release from source repo
-        id: release
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Set deployment variables
+        id: vars
         run: |
-          set -euo pipefail
+          echo "deployment_id=${{ github.event.client_payload.deployment_id }}" >> $GITHUB_OUTPUT
+          echo "source_repo=${{ github.event.client_payload.source_repo || 'fvandepitte-blogs/.github' }}" >> $GITHUB_OUTPUT
+          echo "release_tag=${{ github.event.client_payload.release_tag || inputs.release_tag }}" >> $GITHUB_OUTPUT
 
-          API_URL="https://api.github.com/repos/fvandepitte-blogs/.github/releases/latest"
-          echo "Fetching latest release from: $API_URL"
+      - name: Update deployment status — in_progress
+        if: steps.vars.outputs.deployment_id != ''
+        uses: actions/github-script@v7
+        env:
+          DEPLOYMENT_ID: ${{ steps.vars.outputs.deployment_id }}
+          SOURCE_REPO: ${{ steps.vars.outputs.source_repo }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const [owner, repo] = process.env.SOURCE_REPO.split('/');
+            await github.rest.repos.createDeploymentStatus({
+              owner,
+              repo,
+              deployment_id: parseInt(process.env.DEPLOYMENT_ID),
+              state: 'in_progress',
+              description: 'Deployment started'
+            });
 
-          LATEST_RELEASE="$(curl -sS -L -H "Authorization: token $GH_TOKEN" "$API_URL")"
+      - name: Get release download URL
+        id: release
+        run: |
+          SOURCE_REPO="${{ steps.vars.outputs.source_repo }}"
+          RELEASE_TAG="${{ steps.vars.outputs.release_tag }}"
 
-          TAG_NAME="$(echo "$LATEST_RELEASE" | jq -r '.tag_name // empty')"
-          RELEASE_NAME="$(echo "$LATEST_RELEASE" | jq -r '.name // empty')"
-          HTML_URL="$(echo "$LATEST_RELEASE" | jq -r '.html_url // empty')"
-
-          echo "Latest release tag:  $TAG_NAME"
-          echo "Latest release name: $RELEASE_NAME"
-          echo "Latest release url:  $HTML_URL"
-
-          echo "Assets in latest release:"
-          echo "$LATEST_RELEASE" | jq -r '.assets[]? | " - \(.name) (\(.size) bytes) id=\(.id)"'
-
-          DOWNLOAD_URL="$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name == "blogsite-dist.tar.gz") | .url // empty')"
-
-          if [[ -z "$DOWNLOAD_URL" ]]; then
-            echo "No downloadable asset named blogsite-dist.tar.gz found in latest release"
-            exit 1
+          if [ -n "$RELEASE_TAG" ]; then
+            RELEASE=$(curl -sf \
+              -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${SOURCE_REPO}/releases/tags/${RELEASE_TAG}")
+          else
+            RELEASE=$(curl -sf \
+              -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${SOURCE_REPO}/releases/latest")
           fi
 
-          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
-          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"          
-      - name: Download and extract release
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name == "blogsite-dist.tar.gz") | .browser_download_url')
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+
+      - name: Download and extract release artifact
         run: |
-          curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" -o blogsite-dist.tar.gz "${{ steps.release.outputs.download_url }}"
-          echo "Downloaded $(stat --format=%s blogsite-dist.tar.gz 2>/dev/null || stat -f%z blogsite-dist.tar.gz) bytes"
+          curl -sfL \
+            -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
+            -o blogsite-dist.tar.gz \
+            "${{ steps.release.outputs.download_url }}"
           mkdir -p dist
           tar -xzf blogsite-dist.tar.gz -C dist
           rm blogsite-dist.tar.gz
-          
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
-        
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
-          
+
       - name: Deploy to GitHub Pages
-        id: deployment
+        id: deploy-pages
         uses: actions/deploy-pages@v4
+
+      - name: Update deployment status — success
+        if: success() && steps.vars.outputs.deployment_id != ''
+        uses: actions/github-script@v7
+        env:
+          DEPLOYMENT_ID: ${{ steps.vars.outputs.deployment_id }}
+          SOURCE_REPO: ${{ steps.vars.outputs.source_repo }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const [owner, repo] = process.env.SOURCE_REPO.split('/');
+            await github.rest.repos.createDeploymentStatus({
+              owner,
+              repo,
+              deployment_id: parseInt(process.env.DEPLOYMENT_ID),
+              state: 'success',
+              environment_url: 'https://fvandepitte-blog.github.io',
+              description: 'Deployment completed successfully'
+            });
+
+      - name: Update deployment status — failure
+        if: failure() && steps.vars.outputs.deployment_id != ''
+        uses: actions/github-script@v7
+        env:
+          DEPLOYMENT_ID: ${{ steps.vars.outputs.deployment_id }}
+          SOURCE_REPO: ${{ steps.vars.outputs.source_repo }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const [owner, repo] = process.env.SOURCE_REPO.split('/');
+            await github.rest.repos.createDeploymentStatus({
+              owner,
+              repo,
+              deployment_id: parseInt(process.env.DEPLOYMENT_ID),
+              state: 'failure',
+              description: 'Deployment failed — check workflow logs'
+            });
